@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.1.0]
+
+* remove defunct saving of credit cards for old Stripe Charge ('Stripe') gateway
+* fix saving of credit cards for new Stripe PaymentIntents ('Stripe_PaymentIntents') gateway
+* add HTML structure to saved card radio buttons to make them stylable
+* make `StripeOnsitePayment::radio_button_limit` configurable
+* run rector and linter
+
 ## [2.0.0]
 
 * Upgrade to Silverstripe 5 and PHP 8.3

@@ -21,7 +21,9 @@ composer require innoweb/silverstripe-silvershop-stripe
 ```
 
 ## Configuration
+
 ### Payment Intents
+
 Create a file at `app/_config/payment.yml` that looks something like the following:
 
 ```
@@ -55,7 +57,58 @@ If needed, the customer will be redirected to Stripe or his bank to verify the t
 
 A custom failure URL can be specified here for when a payment fails (for example, the card was declined).
 
+#### Saving credit cards
+
+The `Stripe_PaymentIntents` gateway creates Stripe customers and cards when a payment is processed and stores their tokens in the Silverstripe database. 
+
+To disable the storage of card tokens and the use of previously stored cards in the checkout process, add the following to your config:
+
+```
+---
+Name: app-stripe-config
+After: silvershop-stripe-config
+---
+Innoweb\SilvershopStripe\Checkout\Components\StripeOnsitePayment:
+  enable_saved_cards: false
+```
+
+This will disable storing creadit card tokens in the database and hide the field to select previsouly stored cards in the payment form. 
+
+Stripe still records the card tokens on their platform in order to be able to process refunds etc. But there is no reference to the cards in the Silverstripe database. 
+
+#### Selecting a previously stored card
+
+To select an existing card, the cards are shown as radio buttons in the payment form.
+
+When there are more than 3 cards stored for a user, the field is displayed as a dropdown.
+
+You can change that threshold by adding the following to your config:
+
+```
+Innoweb\SilvershopStripe\Checkout\Components\StripeOnsitePayment:
+  radio_button_limit: 100
+```
+
+#### Styling the card selection radio buttons
+
+The radio button labels include a rudimentary HTML structure to allow styling. You can add and amend the following styles to your CSS:
+
+```
+.field.optionset.existingCreditCards label .cc {
+    display: inline-flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+    width: 100%;
+    max-width: 20rem;
+}
+.field.optionset.existingCreditCards label .cc-brand {
+    margin-right: auto;
+}
+```
+
 ### Stripe Charge (deprecated)
+
 Create a file at `app/_config/payment.yml` that looks something like the following:
 
 ```
@@ -82,22 +135,6 @@ SilverStripe\Omnipay\GatewayInfo:
       apiKey: sk_live_SECRET-KEY-FOR-YOUR-LIVE-ACCOUNT
       publishableKey: pk_live_PUBLISHABLE-KEY-FOR-LIVE-ACCOUNT
 ```
-
-
-## Saving cards
-
-The module creates Stripe customers and cards when a payment is processed. To disable the use of previously stored cards in the checkout process, add the following to your config:
-
-```
----
-Name: app-stripe-config
-After: silvershop-stripe-config
----
-Innoweb\SilvershopStripe\Checkout\Components\StripeOnsitePayment:
-  enable_saved_cards: false
-```
-
-This will hide the field to select previsouly stored cards in th epayment form. The card tokens will still be stored in the background in order to be able to process refunds and future manual payments.
 
 ## License
 

@@ -12,9 +12,9 @@ class MemberExtension extends DataExtension
         'StripeCustomerReference' => 'Varchar',
     ];
     
-    private static array $has_one = array(
+    private static array $has_one = [
         'DefaultCreditCard' => CreditCard::class,
-    );
+    ];
     
     private static array $has_many = [
         'CreditCards' => CreditCard::class,
@@ -33,5 +33,4 @@ class MemberExtension extends DataExtension
         $fields->removeByName('DefaultCreditCardID');
         $fields->removeByName('CreditCards');
     }
-    
 }

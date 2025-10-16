@@ -12,26 +12,26 @@ use Omnipay\Stripe\Message\AbstractRequest;
  *
  * @link https://stripe.com/docs/api/cards/retrieve#retrieve_card
  */
-class FetchCardRequest extends AbstractRequest
+class AttachCardRequest extends AbstractRequest
 {
     public function getData()
     {
         $this->validate('customerReference');
         $this->validate('cardReference');
-        return [];
-    }
 
-    public function getHttpMethod()
-    {
-        return 'GET';
+        $data = [];
+        if ($this->getCustomerReference()) {
+            $data['customer'] = $this->getCustomerReference();
+        }
+
+        return $data;
     }
 
     public function getEndpoint()
     {
         if ($this->getCustomerReference() && $this->getCardReference()) {
-            // Get card details
-            return $this->endpoint . '/customers/' . $this->getCustomerReference()
-                . '/payment_methods/' . $this->getCardReference();
+            // Attach a card to an existing customer
+            return $this->endpoint . '/payment_methods/' . $this->getCardReference() . '/attach';
         }
 
         return null;

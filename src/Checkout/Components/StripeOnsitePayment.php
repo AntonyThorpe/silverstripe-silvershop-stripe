@@ -7,25 +7,23 @@ use Omnipay\Stripe\PaymentIntentsGateway;
 use SilverShop\Checkout\Checkout;
 use SilverShop\Checkout\Component\OnsitePayment;
 use SilverShop\Model\Order;
-use SilverStripe\Core\Extensible;
 use SilverStripe\Core\Config\Config;
+use SilverStripe\Core\Config\Configurable;
+use SilverStripe\Core\Extensible;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Forms\DropdownField;
-use SilverStripe\Forms\FieldGroup;
 use SilverStripe\Forms\FieldList;
 use SilverStripe\Forms\HiddenField;
-use SilverStripe\ORM\ValidationException;
-use SilverStripe\ORM\ValidationResult;
+use SilverStripe\Forms\OptionsetField;
 use SilverStripe\Omnipay\GatewayInfo;
 use SilverStripe\Omnipay\Model\Payment;
 use SilverStripe\Omnipay\Service\PurchaseService;
+use SilverStripe\ORM\FieldType\DBField;
+use SilverStripe\ORM\ValidationException;
+use SilverStripe\ORM\ValidationResult;
 use SilverStripe\Security\Member;
-use SilverStripe\View\Requirements;
 use SilverStripe\Security\Security;
-use SilverStripe\Forms\OptionsetField;
-use Exception;
-use SilverStripe\Core\Config\Configurable;
-use SilverStripe\Forms\FormField;
+use SilverStripe\View\Requirements;
 
 /**
  * This component should only ever be used on SSL encrypted pages!
@@ -35,6 +33,8 @@ class StripeOnsitePayment extends OnsitePayment
     use Injectable;
     use Extensible;
     use Configurable;
+
+    private static int $radio_button_limit = 3;
 
     /**
      * @var bool - if for some reason the gateway is not actually stripe, fall back to OnsitePayment
@@ -56,7 +56,7 @@ class StripeOnsitePayment extends OnsitePayment
      */
     protected function getGateway(Order $order)
     {
-        if (!isset($this->gateway)) {
+        if ($this->gateway === null) {
             $tempPayment = new Payment(
                 [
                     'Gateway' => Checkout::get($order)->getSelectedPaymentMethod(),
@@ -98,15 +98,15 @@ class StripeOnsitePayment extends OnsitePayment
         // Generate the standard set of fields and allow it to be customised
         $fields = FieldList::create(
             [
-                $stripeField = StripeField::create('stripe', _t(static::class.'.CreditCard', 'Credit or debit card')),
+                $stripeField = StripeField::create('stripe', _t(static::class . '.CreditCard', 'Credit or debit card')),
                 $tokenField = HiddenField::create('token', '', ''),
             ]
         );
         // load existing card selection field
         $existingCardField = $this->getExistingCardsField();
-        if ($existingCardField) {
+        if ($existingCardField !== null) {
             $fields->unshift($existingCardField);
-            $stripeField->setTitle(_t(static::class.'.NewCreditCard', 'New credit or debit card'));
+            $stripeField->setTitle(_t(static::class . '.NewCreditCard', 'New credit or debit card'));
         }
 
         $this->extend('updateFormFields', $fields);
@@ -135,6 +135,7 @@ class StripeOnsitePayment extends OnsitePayment
         if ($this->isPaymentIntent) {
             Requirements::javascript('innoweb/silverstripe-silvershop-stripe:javascript/checkout_paymentintents.js');
         }
+
         if (!$this->isPaymentIntent) {
             Requirements::javascript('innoweb/silverstripe-silvershop-stripe:javascript/checkout.js');
         }
@@ -144,13 +145,18 @@ class StripeOnsitePayment extends OnsitePayment
 
     protected function hasExistingCards(Member $member = null): bool
     {
-        // don't show existing card fields
-        if (!$this->config()->get('enable_saved_cards')) {
+        if (!$this->isPaymentIntent) {
             return false;
         }
-        if (!$member) {
+
+        if (Config::inst()->get(self::class, 'enable_saved_cards') === false) {
+            return false;
+        }
+
+        if (!$member instanceof \SilverStripe\Security\Member) {
             $member = Security::getCurrentUser();
         }
+
         return $member && $member->CreditCards()->exists();
     }
 
@@ -163,23 +169,43 @@ class StripeOnsitePayment extends OnsitePayment
         if ($this->hasExistingCards($member)) {
             $cardOptions = [];
             $cards = $member->CreditCards()->sort('Created', 'DESC');
+            $limit = Config::inst()->get(self::class, 'radio_button_limit');
+            $fieldtype = $cards->count() > $limit ? DropdownField::class : OptionsetField::class;
+            $optionText = '<span class="cc"><span class="cc-brand">%s</span><span class="cc-number">****%s</span><span class="cc-expiry">%s</span></span>';
             foreach ($cards as $card) {
-                $cardOptions[$card->ID] = $card->getTitle();
+                if ($fieldtype == OptionsetField::class) {
+                    if ($data = $card->getCardDetails()) {
+                        $cardOptions[$card->CardReference] = DBField::create_field(
+                            'HTMLFragment',
+                            sprintf($optionText, $data->getField('Brand'), $data->getField('LastFourDigits'), $data->getField('ExpiryMonth') . '/' . $data->getField('ExpiryYear'))
+                        );
+                    } else {
+                        $cardOptions[$card->CardReference] = _t('OnsitePaymentCheckoutComponent.CardDataCouldNotBeLoaded', 'Card data could not be loaded');
+                    }
+                } else {
+                    $cardOptions[$card->CardReference] = $card->getTitle();
+                }
             }
-            $cardOptions['newcard'] = _t('OnsitePaymentCheckoutComponent.CreateNewCard', 'Create a new card');
-            $fieldtype = count($cardOptions) > 3 ? DropdownField::class : OptionsetField::class;
+
+            $cardOptions['newcard'] = _t('OnsitePaymentCheckoutComponent.UseNewCard', 'Use a new card');
             $label = _t(
-                "OnsitePaymentCheckoutComponent.ExistingCards",
-                "Existing Credit Cards"
+                "OnsitePaymentCheckoutComponent.ChooseACreditCard",
+                "Choose a credit card"
             );
-            return $fieldtype::create(
+            $defaultCard = $member->DefaultCreditCard();
+            $field = $fieldtype::create(
                 "SavedCreditCardID",
                 $label,
                 $cardOptions,
-                $member->DefaultCreditCardID
+                $defaultCard ? $defaultCard->CardReference : 'newcard'
             )->addExtraClass('existingCreditCards')
-            ->setValue($member->DefaultCreditCardID);
+            ->setValue($defaultCard ? $defaultCard->CardReference : 'newcard');
+
+            $this->extend('updateExistingCardsField', $field);
+
+            return $field;
         }
+
         return null;
     }
 
@@ -208,15 +234,12 @@ class StripeOnsitePayment extends OnsitePayment
         if (!$this->isStripe) {
             return parent::validateData($order, $data);
         } else {
-
             // If existing card selected, check that it exists in $member->CreditCards
-            $existingID = !empty($data['SavedCreditCardID']) ? (int)$data['SavedCreditCardID'] : 0;
-            if ($existingID) {
-                if (!Security::getCurrentUser() || !Security::getCurrentUser()->CreditCards()->byID($existingID)) {
-                    $result = ValidationResult::create();
-                    $result->error("Invalid card supplied", 'SavedCreditCardID');
-                    throw new ValidationException($result);
-                }
+            $existingID = empty($data['SavedCreditCardID']) ? 0 : (int)$data['SavedCreditCardID'];
+            if ($existingID !== 0 && (!Security::getCurrentUser() || !Security::getCurrentUser()->CreditCards()->byID($existingID))) {
+                $result = ValidationResult::create();
+                $result->error("Invalid card supplied", 'SavedCreditCardID');
+                throw new ValidationException($result);
             }
 
             // NOTE: Stripe will validate clientside and if for some reason that falls through

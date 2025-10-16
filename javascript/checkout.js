@@ -2,106 +2,70 @@
  * Hooks into the checkout form, activating the Stripe.js api to retrieve a token and store it in a hidden field.
  * It doesn't depend on jQuery or any other javascript library.
  */
-(function(window, document, undefined) {
-	'use strict';
+(function (window, document, undefined) {
+  'use strict';
 
-	document.addEventListener('DOMContentLoaded', function() {
-		
-		var config = window.StripeConfig,
-			form = document.getElementById(config.formID);
+  document.addEventListener('DOMContentLoaded', function () {
 
-		if (!config) {
-			console.error('StripeConfig was not set');
-			return;
-		}
-		if (!form) {
-			console.error('Form was not found on the page!', config.formID);
-			return;
-		}
+    var config = window.StripeConfig,
+      form = document.getElementById(config.formID);
 
-		var stripe = Stripe(config.key);
-		var elements = stripe.elements();
-		
-		var style = {
-			base: {
-				color: '#111',
-				lineHeight: '24px',
-				fontFamily: '"Helvetica Neue", Helvetica, sans-serif',
-				fontSmoothing: 'antialiased',
-				fontSize: '18px',
-				'::placeholder': {
-					color: '#888'
-				}
-			},
-			invalid: {
-				color: '#961c13',
-				iconColor: '#961c13'
-			}
-		};
+    if (!config) {
+      console.error('StripeConfig was not set');
+      return;
+    }
+    if (!form) {
+      console.error('Form was not found on the page!', config.formID);
+      return;
+    }
 
-		
-		var card = elements.create('card', {style: style});
-		
-		// check if card selection field is present
-		var selectionFields = document.querySelectorAll('input[name="SavedCreditCardID"]') || document.querySelectorAll('select[name="SavedCreditCardID"]');
-		if (selectionFields && selectionFields.length) {
-			function findAncestor (el, cls) {
-			    while ((el = el.parentElement) && !el.classList.contains(cls));
-			    return el;
-			}
-			function updateCardField() {
-				var current = document.querySelector('input[name="SavedCreditCardID"]:checked') || document.querySelector('select[name="SavedCreditCardID"]');
-				if (current && current.value == 'newcard') {
-					findAncestor(document.getElementById(config.stripeField), 'field').style.display = 'block';
-					card.mount('#' + config.stripeField);
-				} else {
-					card.unmount('#' + config.stripeField);
-					findAncestor(document.getElementById(config.stripeField), 'field').style.display = 'none';
-				}
-			};
-			// attache change event
-			Array.prototype.forEach.call(selectionFields, function (selectionField) {
-				selectionField.addEventListener('change', updateCardField);
-			});
-			// run update
-			updateCardField();
-		} else {
-			// mount card field without selector
-			card.mount('#' + config.stripeField);
-		}
-		
-		function stripeTokenHandler(token) {
-			// Insert the token ID into the form so it gets submitted to the server
-			var hiddenInput = document.getElementById(config.tokenField);
-			hiddenInput.setAttribute('value', token.id);
+    var stripe = Stripe(config.key);
+    var elements = stripe.elements();
 
-			// Submit the form
-			form.submit();
-		}
-		
-		function createToken() {
-			stripe.createToken(card).then(function(result) {
-			    if (result.error) {
-			    	// Inform the user if there was an error
-			    	var errorElement = document.getElementById(config.formID + '_error');
-			    	errorElement.textContent = result.error.message;
-			    	errorElement.classList.add('error');
-			    	errorElement.style.display = 'block';
-			    } else {
-			    	// Send the token to your server
-			    	stripeTokenHandler(result.token);
-				}
-			});
-		};		
+    var style = {
+      base: {
+        color: '#111',
+        lineHeight: '24px',
+        fontFamily: '"Helvetica Neue", Helvetica, sans-serif',
+        fontSmoothing: 'antialiased',
+        fontSize: '18px',
+        '::placeholder': {
+          color: '#888'
+        }
+      },
+      invalid: {
+        color: '#961c13',
+        iconColor: '#961c13'
+      }
+    };
 
-		form.addEventListener('submit', function(e) {
-			var selectedSavedCard = document.querySelector('input[name="SavedCreditCardID"]:checked') || document.querySelector('select[name="SavedCreditCardID"]');
-			if (!selectedSavedCard || selectedSavedCard.value == 'newcard') {
-				e.preventDefault();
-				createToken();
-			}
-		});
+    var card = elements.create('card', {style: style});
 
-	});
-		
+    // mount card field
+    card.mount('#' + config.stripeField);
+
+    function stripeTokenHandler(token) {
+      // Insert the token ID into the form so it gets submitted to the server
+      var hiddenInput = document.getElementById(config.tokenField);
+      hiddenInput.setAttribute('value', token.id);
+      form.submit();
+    }
+
+    function createToken() {
+      stripe.createToken(card).then(function (result) {
+        if (result.error) {
+        } else {
+          // Send the token to your server
+          stripeTokenHandler(result.token);
+        }
+      });
+    };
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      createToken();
+    });
+
+  });
+
 })(this, this.document);

@@ -2,15 +2,21 @@
 
 namespace Innoweb\SilvershopStripe\Checkout;
 
+use Innoweb\SilvershopStripe\Checkout\Components\StripeOnsitePayment;
 use Innoweb\SilvershopStripe\Model\CreditCard;
+use Innoweb\SilvershopStripe\Omnipay\Message\AttachCardRequest;
+use Omnipay\Common\Exception\InvalidRequestException;
+use Omnipay\Common\Http\Client as OmnipayClient;
 use SilverShop\Checkout\OrderProcessor;
+use SilverStripe\Core\Config\Config;
+use SilverStripe\Core\Injector\Injector;
+use SilverStripe\Omnipay\GatewayInfo;
 use SilverStripe\Omnipay\Model\Payment;
 use SilverStripe\Omnipay\Service\PaymentService;
 use SilverStripe\Omnipay\Service\ServiceFactory;
 use SilverStripe\Omnipay\Service\ServiceResponse;
 use SilverStripe\Security\Security;
-use SilverStripe\Core\Config\Config;
-use Innoweb\SilvershopStripe\Checkout\Components\StripeOnsitePayment;
+use Symfony\Component\HttpFoundation\Request as SymfonyRequest;
 
 class StripeOrderProcessor extends OrderProcessor
 {
@@ -26,7 +32,7 @@ class StripeOrderProcessor extends OrderProcessor
      * @param  string $cancelUrl   (optional) return URL for cancelled/failed payments
      * @throws \SilverStripe\Omnipay\Exception\InvalidConfigurationException
      */
-    public function makePayment($gateway, $gatewaydata = array(), $successUrl = null, $cancelUrl = null): ?ServiceResponse
+    public function makePayment($gateway, $gatewaydata = [], $successUrl = null, $cancelUrl = null): ?ServiceResponse
     {
         // only do this for Stripe
         if (!in_array($gateway, ['Stripe', 'Stripe_PaymentIntents'])) {
@@ -59,14 +65,14 @@ class StripeOrderProcessor extends OrderProcessor
         $gatewaydata = $this->getGatewayData($gatewaydata);
 
         // save stripe customer and credit card, update data
-        $gatewaydata = $this->saveCustomerAndCard($service, $payment, $gatewaydata);
+        $gatewaydata = $this->saveCustomerAndCard($gateway, $service, $payment, $gatewaydata);
 
         // Initiate payment, get the result back
         try {
             $serviceResponse = $service->initiate($gatewaydata);
-        } catch (\SilverStripe\Omnipay\Exception\Exception $ex) {
+        } catch (\SilverStripe\Omnipay\Exception\Exception $exception) {
             // error out when an exception occurs
-            $this->error($ex->getMessage());
+            $this->error($exception->getMessage());
             return null;
         }
 
@@ -88,27 +94,24 @@ class StripeOrderProcessor extends OrderProcessor
     /**
      * Store customer and credit card reference
      */
-    protected function saveCustomerAndCard(PaymentService $service, Payment $payment, array $gatewaydata): array
+    protected function saveCustomerAndCard(string $gatewayName, PaymentService $service, Payment $payment, array $gatewaydata): array
     {
-        if ($payment) {
-
-            // only do this for Stripe
-            if ($payment->Gateway != 'Stripe') {
-                return $gatewaydata;
-            }
-
+        if ($payment
+            && $gatewayName === 'Stripe_PaymentIntents'
+            && Config::inst()->get(StripeOnsitePayment::class, 'enable_saved_cards')
+        ) {
             // update member and credit card
             $member = Security::getCurrentUser();
             if (!$member) {
                 $member = $this->order->Member();
             }
-            if ($member && $member->exists()) {
 
+            if ($member && $member->exists()) {
                 // create new customer object in Stripe and store reference
                 if (!$member->StripeCustomerReference) {
                     $stripeData = [
                         'email' => $member->Email,
-                        'description' => $member->getName()
+                        'description' => $member->getName(),
                     ];
                     $request = $service->oGateway()->createCustomer($stripeData);
                     $response = $request->send();
@@ -121,46 +124,54 @@ class StripeOrderProcessor extends OrderProcessor
                 }
 
                 // create new card if new one submitted
-                if ($member->StripeCustomerReference) {
+                if ($member->StripeCustomerReference && $member->CreditCards()->filter('CardReference', $gatewaydata['token'])->count() == 0) {
                     if (empty($gatewaydata['SavedCreditCardID']) || $gatewaydata['SavedCreditCardID'] == 'newcard') {
-
-                        $request = $service->oGateway()->createCard(
-                            [
-                            'cardReference' => $gatewaydata['token'] ?? '',
-                            'customerReference' => $member->StripeCustomerReference,
-                            ]
-                        );
-                        $response = $request->send();
-                        if ($response->isSuccessful()) {
-                            // save card
-                            $card = CreditCard::create();
-                            $card->CardReference = $response->getCardReference();
-                            $card->write();
-                            // add card to member
-                            $member->CreditCards()->add($card);
-                            if (!$member->DefaultCreditCardID) {
-                                $member->DefaultCreditCardID = $card->ID;
+                        try {
+                            $gatewayFactory = Injector::inst()->get(\Omnipay\Common\GatewayFactory::class);
+                            $gateway = $gatewayFactory->create($gatewayName);
+                            $parameters = GatewayInfo::getParameters($gatewayName);
+                            if (is_array($parameters)) {
+                                $gateway->initialize($parameters);
                             }
-                            $member->write();
-                            // add card to payment
-                            $payment->SavedCreditCardID = $card->ID;
-                            $payment->write();
-                        } else {
-                            $this->error($response->getMessage());
-                        }
 
+                            $obj = new AttachCardRequest(new OmnipayClient(), SymfonyRequest::createFromGlobals());
+                            $attachCardRequest = $obj->initialize(array_replace($gateway->getParameters(), $parameters));
+                            $attachCardRequest->setCustomerReference($member->StripeCustomerReference);
+                            $attachCardRequest->setCardReference($gatewaydata['token']);
+
+                            $response = $attachCardRequest->send();
+                            if ($response->isSuccessful()) {
+                                // save card
+                                $card = CreditCard::get()->find('CardReference', $gatewaydata['token']);
+                                if (!$card || !$card->exists()) {
+                                    $card = CreditCard::create();
+                                    $card->CardReference = $gatewaydata['token'];
+                                    $card->write();
+                                }
+
+                                // add card to member
+                                $member->CreditCards()->add($card);
+                                if (!$member->DefaultCreditCardID) {
+                                    $member->DefaultCreditCardID = $card->ID;
+                                }
+
+                                $member->write();
+                                // add card to payment
+                                $payment->SavedCreditCardID = $card->ID;
+                                $payment->write();
+                            }
+                        } catch (InvalidRequestException) {
+                        }
                     } else {
                         // this will have been validated in OnsitePaymentCheckoutComponent
-                        $payment->SavedCreditCardID = $gatewaydata['SavedCreditCardID'];
+                        $payment->SavedCreditCardID = CreditCard::get()->find('CardReference', $gatewaydata['SavedCreditCardID'])->ID;
                         $payment->write();
                     }
                 }
 
                 // update stripe data, replacing token with customer/card
                 if ($member->StripeCustomerReference) {
-
                     // remove token already used for customer creation, replace with customer reference
-                    unset($gatewaydata['token']);
                     $gatewaydata['customerReference'] = $member->StripeCustomerReference;
 
                     // add credit card reference for this payment if available
@@ -183,11 +194,11 @@ class StripeOrderProcessor extends OrderProcessor
         if ($this->order->BillingAddress()->Company) {
             $data['description'] .= (string) $this->order->BillingAddress()->Company . ' | ';
         }
+
         $data['description'] .= $data['email'] . ' | ' . $data['transactionId'] . ' ';
 
         $this->order->extend('updateGetGatewayData', $data);
 
         return $data;
     }
-
 }

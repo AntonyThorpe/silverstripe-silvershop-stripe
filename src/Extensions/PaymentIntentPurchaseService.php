@@ -3,12 +3,11 @@
 
 namespace Innoweb\SilvershopStripe\Extensions;
 
-
 use Omnipay\Common\Message\RequestInterface;
 use Omnipay\Common\Message\ResponseInterface;
-use SilverStripe\Omnipay\GatewayInfo;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Extension;
+use SilverStripe\Omnipay\GatewayInfo;
 
 class PaymentIntentPurchaseService extends Extension
 {
@@ -34,8 +33,6 @@ class PaymentIntentPurchaseService extends Extension
                 $payment->setFailureUrl($stripeConfig['failureUrl']);
             }
         }
-
-
     }
 
     public function onAfterSendPurchase(RequestInterface $request, ResponseInterface $response): void
@@ -54,7 +51,6 @@ class PaymentIntentPurchaseService extends Extension
         // Hack to get the payment, as silverstripe-omnipay doesn't currently
         // provide a getPayment() method in PaymentService
         $reflectionProperty = new \ReflectionProperty($this->owner::class, 'payment');
-        $reflectionProperty->setAccessible(true);
 
         $payment = $reflectionProperty->getValue($this->owner);
         if ($payment->StripePaymentIntentReference) {

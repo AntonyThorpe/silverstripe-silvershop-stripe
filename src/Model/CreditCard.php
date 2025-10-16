@@ -3,12 +3,14 @@
 namespace Innoweb\SilvershopStripe\Model;
 
 use Innoweb\SilvershopStripe\Omnipay\Message\FetchCardRequest;
-use Omnipay\Common\Exception\InvalidRequestException;
 use Omnipay\Common\Http\Client as OmnipayClient;
+use Psr\Log\LoggerInterface;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injector;
-use SilverStripe\ORM\DB;
-use SilverStripe\ORM\DataObject;
 use SilverStripe\Omnipay\GatewayInfo;
+use SilverStripe\Omnipay\Model\Payment;
+use SilverStripe\ORM\DataObject;
+use SilverStripe\ORM\DB;
 use SilverStripe\Security\Member;
 use SilverStripe\View\ArrayData;
 use Symfony\Component\HttpFoundation\Request as SymfonyRequest;
@@ -39,6 +41,10 @@ class CreditCard extends DataObject
                 $data = [];
 
                 $gatewayName = 'Stripe';
+                if ($gateways = Config::inst()->get(Payment::class, 'allowed_gateways')) {
+                    $gatewayName = $gateways[0];
+                }
+
                 $gatewayFactory = Injector::inst()->get(\Omnipay\Common\GatewayFactory::class);
                 $gateway = $gatewayFactory->create($gatewayName);
                 $parameters = GatewayInfo::getParameters($gatewayName);
@@ -47,7 +53,7 @@ class CreditCard extends DataObject
                 }
 
                 $obj = new FetchCardRequest(new OmnipayClient(), SymfonyRequest::createFromGlobals());
-                $fetchCardRequest = $obj->initialize(array_replace($gateway->getParameters(), $parameters));
+                $fetchCardRequest = $obj->initialize(array_replace($gateway->getParameters(), $parameters ?? []));
                 $fetchCardRequest->setCustomerReference($this->Member()->StripeCustomerReference);
                 $fetchCardRequest->setCardReference($this->CardReference);
 
@@ -55,25 +61,30 @@ class CreditCard extends DataObject
                 if ($response->isSuccessful()) {
                     $responseData = $response->getData();
                     $data = [
-                        'Brand' => $responseData['brand'] ?? null,
-                        'LastFourDigits' => $responseData['last4'] ?? null,
-                        'ExpiryMonth' => $responseData['exp_month'] ?? null,
-                        'ExpiryYear' => $responseData['exp_year'] ?? null,
+                        'Brand' => $responseData['card']['brand'] ?? null,
+                        'LastFourDigits' => $responseData['card']['last4'] ?? null,
+                        'ExpiryMonth' => $responseData['card']['exp_month'] ?? null,
+                        'ExpiryYear' => $responseData['card']['exp_year'] ?? null,
                     ];
                     $this->card_details = ArrayData::create($data);
+                } else {
+                    Injector::inst()->get(LoggerInterface::class)->error('CreditCard::getCardDetails: responce failed: ' . $response->getMessage());
                 }
-            } catch (InvalidRequestException) {
+            } catch (Exception $e) {
+                Injector::inst()->get(LoggerInterface::class)->error($e->getMessage());
             }
         }
+
         return $this->card_details;
     }
 
     public function getTitle(): ?string
     {
         if ($data = $this->getCardDetails()) {
-            return $data->Brand . ' ****' . $data->LastFourDigits . ' ' . $data->ExpiryMonth . '/' . $data->ExpiryYear;
+            return $data->getField('Brand') . ' ****' . $data->getField('LastFourDigits') . ' ' . $data->getField('ExpiryMonth') . '/' . $data->getField('ExpiryYear');
         }
-        return null;
+
+        return 'Data could not be loaded';
     }
 
     public function onAfterBuild(): void
