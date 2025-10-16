@@ -76,23 +76,23 @@
     }
 
     function stripeTokenHandler(token) {
-      if (typeof token === 'object') {
+      if (typeof(token) === 'object') {
         token = token.id;
       }
       // Insert the token ID into the form so it gets submitted to the server
       var hiddenInput = document.getElementById(config.tokenField);
       hiddenInput.setAttribute('value', token);
+      form.submit();
     }
 
     form.addEventListener('submit', (event) => {
+      event.preventDefault();
       var selectedSavedCard = document.querySelector('input[name="SavedCreditCardID"]:checked') || document.querySelector('select[name="SavedCreditCardID"]');
-      if (!selectedSavedCard || selectedSavedCard.value == 'newcard') {
-
+      if (typeof(selectedSavedCard) === 'undefined' || selectedSavedCard === null || selectedSavedCard.value == 'newcard') {
         stripe.createPaymentMethod({
           type: 'card',
           card: card
         }).then((result) => {
-
           if (result.error) {
           } else {
             // set token and submit form
